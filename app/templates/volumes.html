@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>总册卷号（{{ total }} / {{ max_volumes }}）</h2>
+<form class="upload" method="post" action="{{ url_for('volumes_upload') }}" enctype="multipart/form-data">
+  <input type="file" name="file" accept=".txt,.csv" required>
+  <button class="btn primary" type="submit">上传并替换总册</button>
+  <span class="hint">每行一个卷号，也支持单列 CSV；上传后立即重算。空文件表示总册为空。</span>
+</form>
+
+{% if rows %}
+<table>
+  <thead><tr><th>#</th><th>卷号</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr><td>{{ (page - 1) * 100 + loop.index }}</td><td>{{ r.volume_no }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="pager">
+  {% if page > 1 %}<a href="{{ url_for('volumes', page=page-1) }}">上一页</a>{% endif %}
+  <span>第 {{ page }} / {{ pages }} 页</span>
+  {% if page < pages %}<a href="{{ url_for('volumes', page=page+1) }}">下一页</a>{% endif %}
+</div>
+{% else %}<p class="empty">暂无卷号，请上传总册文件。</p>{% endif %}
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>判定结果
+  {% if version %}<span class="hint">当前版本 #{{ version.id }}（{{ version.created_at }}）</span>{% endif %}
+</h2>
+{% if not version %}
+  <p class="empty">尚无结果版本：请先上传总册卷号并保存收录规则，任一名单提交/撤回后会自动重算。</p>
+{% else %}
+<div class="filters">
+  <a class="btn small {{ 'primary' if not verdict }}" href="{{ url_for('results') }}">全部（{{ version.total }}）</a>
+  {% for v in verdicts %}
+  <a class="btn small {{ 'primary' if verdict == v }}"
+     href="{{ url_for('results', verdict=v) }}">{{ verdict_labels[v] }}</a>
+  {% endfor %}
+  <a class="btn" href="{{ url_for('download', version_id=version.id, only_in=1) }}">下载本版确定入编 CSV</a>
+</div>
+<table>
+  <thead><tr><th>#</th><th>卷号</th><th>结论</th><th>可翻转结论的缺报名单</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ (page - 1) * 100 + loop.index }}</td>
+      <td>{{ r.volume_no }}</td>
+      <td><span class="badge v-{{ r.verdict }}">{{ verdict_labels[r.verdict] }}</span></td>
+      <td>{% if r.verdict == 'pending' %}{{ r.relevant_names or '（规则不依赖任何缺报变量，理论上不应出现）' }}{% else %}—{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="pager">
+  {% if page > 1 %}<a href="{{ url_for('results', verdict=verdict, page=page-1) }}">上一页</a>{% endif %}
+  <span>第 {{ page }} / {{ pages }} 页（共 {{ total }} 条）</span>
+  {% if page < pages %}<a href="{{ url_for('results', verdict=verdict, page=page+1) }}">下一页</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

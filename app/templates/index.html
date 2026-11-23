@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="cards">
+  <div class="card"><h2>总册卷号</h2><p class="num">{{ volume_count }}<span>/{{ max_volumes }}</span></p>
+    <a class="btn" href="{{ url_for('volumes') }}">管理</a></div>
+  <div class="card"><h2>名单来源</h2><p class="num">{{ list_count }}<span>/{{ max_lists }}</span></p>
+    <p class="sub">已提交 {{ reported_count }} 份</p>
+    <a class="btn" href="{{ url_for('lists') }}">管理</a></div>
+  <div class="card"><h2>收录规则</h2>
+    <p class="sub">{{ '已配置' if rule_text else '未配置' }}</p>
+    <a class="btn" href="{{ url_for('rules') }}">编辑</a></div>
+  <div class="card"><h2>当前版本</h2>
+    {% if current_version %}
+      <p class="num">#{{ current_version.id }}</p>
+      <p class="sub">入选 {{ current_version.n_in }} · 落选 {{ current_version.n_out }} · 待补 {{ current_version.n_pending }}</p>
+      <a class="btn primary" href="{{ url_for('download', version_id=current_version.id, only_in=1) }}">下载确定入编 CSV</a>
+    {% else %}
+      <p class="sub">尚未生成版本（需先备齐总册与规则）</p>
+    {% endif %}
+    <a class="btn" href="{{ url_for('results') }}">查看结果</a></div>
+</section>
+
+<section>
+  <h2>最近版本</h2>
+  {% if versions %}
+  <table>
+    <thead><tr><th>版本</th><th>生成时间</th><th>原因</th><th>入选</th><th>落选</th><th>待补</th><th>缺报名单</th><th>下载</th></tr></thead>
+    <tbody>
+    {% for v in versions %}
+      <tr>
+        <td>#{{ v.id }}</td><td>{{ v.created_at }}</td><td>{{ v.reason }}</td>
+        <td class="c-in">{{ v.n_in }}</td><td class="c-out">{{ v.n_out }}</td><td class="c-pending">{{ v.n_pending }}</td>
+        <td>{{ v.n_missing_lists }}</td>
+        <td>
+          <a href="{{ url_for('download', version_id=v.id, only_in=1) }}">确定入编</a> ·
+          <a href="{{ url_for('download', version_id=v.id) }}">全部结论</a>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">还没有任何版本。</p>{% endif %}
+</section>
+{% endblock %}

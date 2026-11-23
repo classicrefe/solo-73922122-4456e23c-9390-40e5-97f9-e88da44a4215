@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>收录规则（JSON）</h2>
+<p class="hint">
+  操作键：<code>并/union</code>（并集）、<code>交/intersect</code>（交集）、<code>差/diff</code>（差集，恰好两个参数）。
+  叶子节点写名单名称的字符串；可任意嵌套。缺报名单中的卷号归属未知，系统枚举所有可能组合给出确定/待补结论。
+</p>
+{% if names %}
+<p class="hint">已登记名单：{% for n in names %}<code>{{ n }}</code> {% endfor %}</p>
+{% endif %}
+<form method="post" action="{{ url_for('rules_save') }}">
+  <textarea name="rule" rows="16" spellcheck="false" placeholder='{{ example }}'>{{ rule_text }}</textarea>
+  <div><button class="btn primary" type="submit">保存并重算</button></div>
+</form>
+<details>
+  <summary>规则示例</summary>
+  <pre>{{ example }}</pre>
+</details>
+{% endblock %}

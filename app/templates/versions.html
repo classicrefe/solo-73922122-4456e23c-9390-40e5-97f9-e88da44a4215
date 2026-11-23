@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>历史版本与下载</h2>
+<p class="hint">每次成功重算生成一个不可变版本；重算失败不会产生新版本，页面与下载继续沿用当前版本。旧版本可随时下载。</p>
+{% if rows %}
+<table>
+  <thead><tr><th>版本</th><th>生成时间</th><th>原因</th><th>总卷号</th><th>入选</th><th>落选</th><th>待补</th><th>缺报名单数</th><th>下载</th></tr></thead>
+  <tbody>
+  {% for v in rows %}
+    <tr class="{{ 'current' if v.id == current }}">
+      <td>#{{ v.id }}{% if v.id == current %} <span class="badge st-reported">当前</span>{% endif %}</td>
+      <td>{{ v.created_at }}</td><td>{{ v.reason }}</td><td>{{ v.total }}</td>
+      <td class="c-in">{{ v.n_in }}</td><td class="c-out">{{ v.n_out }}</td><td class="c-pending">{{ v.n_pending }}</td>
+      <td>{{ v.n_missing_lists }}</td>
+      <td>
+        <a href="{{ url_for('download', version_id=v.id, only_in=1) }}">确定入编卷号 CSV</a> ·
+        <a href="{{ url_for('download', version_id=v.id) }}">全部结论 CSV</a>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">还没有版本。</p>{% endif %}
+{% endblock %}

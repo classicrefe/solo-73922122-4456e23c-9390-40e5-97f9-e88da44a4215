@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>名单来源（{{ rows|length }} / {{ max_lists }}）</h2>
+
+<form class="upload" method="post" action="{{ url_for('lists_register') }}">
+  <input type="text" name="name" placeholder="名单名称，如：甲馆验收名单" required>
+  <select name="kind">
+    {% for k in kinds %}<option value="{{ k }}">{{ kind_labels[k] }}</option>{% endfor %}
+  </select>
+  <button class="btn primary" type="submit">登记来源</button>
+  <span class="hint">最多 {{ max_lists }} 个；登记后默认“缺报”，提交文件后转为“已提交”。</span>
+</form>
+
+{% if rows %}
+<table>
+  <thead><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th><th>卷号数</th><th>提交 / 替换</th><th>操作</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ r.name }}</td>
+      <td>{{ kind_labels[r.kind] }}</td>
+      <td><span class="badge st-{{ r.status }}">{{ status_labels[r.status] }}</span></td>
+      <td>{{ r.n_entries }}</td>
+      <td>
+        <form method="post" action="{{ url_for('lists_upload', list_id=r.id) }}" enctype="multipart/form-data" class="inline">
+          <input type="file" name="file" accept=".txt,.csv" required>
+          <button class="btn small" type="submit">{{ '替换名单' if r.status != 'missing' else '上传名单' }}</button>
+        </form>
+      </td>
+      <td>
+        {% if r.status != 'missing' %}
+        <form method="post" action="{{ url_for('lists_withdraw', list_id=r.id) }}" class="inline"
+              onsubmit="return confirm('撤回后该名单按缺报处理，确定？');">
+          <button class="btn small danger" type="submit">撤回（按缺报）</button>
+        </form>
+        {% else %}<span class="hint">等待补交</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">尚未登记名单来源。</p>{% endif %}
+<p class="hint">上传空文件（0 字节或仅空白行）表示该名单已提交但不含任何卷号；这与“缺报”不同。</p>
+{% endblock %}

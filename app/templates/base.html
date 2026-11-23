@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}专题目录入编判定{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>专题目录 · 入编判定台</h1>
+  <nav>
+    <a href="{{ url_for('index') }}">概览</a>
+    <a href="{{ url_for('volumes') }}">总册卷号</a>
+    <a href="{{ url_for('lists') }}">名单来源</a>
+    <a href="{{ url_for('rules') }}">收录规则</a>
+    <a href="{{ url_for('results') }}">判定结果</a>
+    <a href="{{ url_for('versions') }}">版本与下载</a>
+  </nav>
+</header>
+<main>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flashes">
+      {% for category, msg in messages %}
+        <p class="flash {{ category }}">{{ msg }}</p>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+<footer>缺报名单按三值逻辑枚举所有归属组合；重算成功后页面归类与下载一起切换，失败沿用原版。</footer>
+</body>
+</html>
