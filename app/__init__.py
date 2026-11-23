@@ -133,6 +133,9 @@ def create_app(db_path: str | None = None) -> Flask:
         if summary.get("created"):
             flash(f"规则已保存，重算出版本 #{summary['version_id']}：入选 {summary['n_in']} / "
                   f"落选 {summary['n_out']} / 待补 {summary['n_pending']}", "ok")
+        elif summary.get("equivalent"):
+            flash("新写法与现行规则在所有名单归属组合下结论一致：已保存新写法供下次发版使用，"
+                  "本次跳过逐卷重算，现行版本不变", "ok")
         else:
             flash("规则已保存；总册卷号缺失，暂未生成版本", "ok")
         return redirect(url_for("rules"))

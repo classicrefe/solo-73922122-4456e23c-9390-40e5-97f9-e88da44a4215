@@ -24,7 +24,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .logic import MAX_LISTS, RuleError, RuleEvaluator, parse_rule, referenced_names
+from .logic import (MAX_LISTS, RuleError, RuleEvaluator, parse_rule,
+                    referenced_names, rules_equivalent)
 
 MAX_VOLUMES = 50_000
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 单次上传 8 MiB 上限
@@ -318,15 +319,34 @@ class CatalogService:
             conn = self._conn()
             try:
                 names = [r["name"] for r in self.list_sources(conn)]
-                parse_rule(doc, names)  # 校验，失败抛 RuleError -> ServiceError
+                new_tree = parse_rule(doc, names)  # 校验，失败抛 RuleError -> ServiceError
+
+                # 总册非空且已有规则：按规则含义决定要不要发版。
+                # 等价判定在写锁内进行，读到的是届时生效的规则；
+                # 判定只取决于两份规则的语义（全部归属组合的真值表），
+                # 与名单提交状态无关，因此补报发版不会使等价结论失效。
+                equivalent = False
+                old_text = self.get_rule_text(conn)
+                if old_text is not None and self.volume_count(conn) > 0:
+                    try:
+                        old_tree = parse_rule(json.loads(old_text), names)
+                        equivalent = rules_equivalent(old_tree, new_tree)
+                    except (RuleError, json.JSONDecodeError):
+                        equivalent = False  # 旧规则无法解析：保守起见不视为等价
+
                 conn.execute(
                     "INSERT INTO rule_doc(id, doc, updated_at) VALUES (1, ?, ?) "
                     "ON CONFLICT(id) DO UPDATE SET doc = excluded.doc, updated_at = excluded.updated_at",
                     (text.strip(), now_iso()),
                 )
+                if equivalent:
+                    # 等价改写：保存新写法供下次发版使用，跳过逐卷重算；
+                    # 现行版及各历史版的规则快照原样保留。
+                    conn.commit()
+                    return {"version_id": None, "created": False, "equivalent": True}
                 summary = self._recompute(conn, reason="收录规则更新")
                 conn.commit()
-                return summary
+                return {**summary, "equivalent": False}
             except RuleError as exc:
                 conn.rollback()
                 raise ServiceError(str(exc)) from exc

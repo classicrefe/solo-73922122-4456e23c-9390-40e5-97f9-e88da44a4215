@@ -38,6 +38,11 @@ def setup_basic(client):
     client.post("/lists/register", data={"name": "暂缓丙", "kind": "hold"})
 
 
+def setup_basic_no_volumes(client):
+    client.post("/lists/register", data={"name": "甲馆", "kind": "accept"})
+    client.post("/lists/register", data={"name": "乙馆", "kind": "accept"})
+
+
 # ---------------------------------------------------------------- 页面冒烟
 
 def test_pages_render_empty(client):
@@ -314,3 +319,149 @@ def test_50k_volumes_performance(tmp_path):
     finally:
         conn.close()
     assert elapsed < 30, f"重算过慢：{elapsed:.1f}s"
+
+
+# ---------------------------------------------------------------- 规则等价保存
+
+def test_equivalent_rule_save_skips_recompute(client, svc):
+    """等价改写：保存新写法但不重算、不发新版，现行版与历史版快照不变。"""
+    setup_basic(client)
+    client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'})
+    upload(client, "/lists/1/upload", ["V1", "V2"])
+    with svc._conn() as conn:
+        v_before = svc.current_version_id(conn)
+        versions_before = svc.list_versions(conn)
+        snapshots_before = {v["id"]: v["rule_snapshot"] for v in versions_before}
+
+    # 吸收律改写：甲馆 ∪ 乙馆 ∪ (甲馆 ∩ 乙馆) ≡ 甲馆 ∪ 乙馆
+    rv = client.post("/rules/save",
+                     data={"rule": '{"并":["甲馆","乙馆",{"交":["甲馆","乙馆"]}]}'},
+                     follow_redirects=True)
+    assert rv.status_code == 200
+    assert "结论一致" in rv.text and "跳过逐卷重算" in rv.text
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) == v_before  # 现行版不变
+        versions_after = svc.list_versions(conn)
+        assert len(versions_after) == len(versions_before)  # 没有新版本
+        # 各历史版规则快照原样保留
+        for v in versions_after:
+            assert v["rule_snapshot"] == snapshots_before[v["id"]]
+        # 新写法已保存，供下次发版使用
+        assert svc.get_rule_text(conn) == '{"并":["甲馆","乙馆",{"交":["甲馆","乙馆"]}]}'
+
+
+def test_same_rule_resave_skips_recompute(client, svc):
+    """重复保存相同规则：文本级等价，同样不发新版。"""
+    setup_basic(client)
+    client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'})
+    with svc._conn() as conn:
+        v_before = svc.current_version_id(conn)
+    rv = client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'},
+                     follow_redirects=True)
+    assert "跳过逐卷重算" in rv.text
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) == v_before
+
+
+def test_nonequivalent_rule_recomputes_even_if_verdicts_same(client, svc):
+    """当前逐卷判定完全相同，但存在归属组合结论不同：仍须重算发版。"""
+    setup_basic(client)
+    client.post("/rules/save", data={"rule": '{"差":[{"并":["甲馆","乙馆"]},"暂缓丙"]}'})
+    upload(client, "/lists/1/upload", ["V1", "V2"])
+    upload(client, "/lists/2/upload", ["V1", "V2"])  # 乙馆与甲馆内容相同
+    with svc._conn() as conn:
+        v_before = svc.current_version_id(conn)
+        verdicts_before = {r["volume_no"]: r["verdict"]
+                           for r in svc.result_page(conn, v_before, None, 100, 0)}
+
+    # 新规则 甲馆 − 暂缓丙：眼下逐卷结论与旧规则一致（乙馆内容同甲馆），
+    # 但“乙馆含某卷而甲馆不含”的归属组合下结论不同 -> 必须重算发版
+    rv = client.post("/rules/save", data={"rule": '{"差":["甲馆","暂缓丙"]}'},
+                     follow_redirects=True)
+    assert "重算出版本" in rv.text
+    with svc._conn() as conn:
+        v_after = svc.current_version_id(conn)
+        assert v_after > v_before  # 确实发了新版
+        version = svc.get_version(conn, v_after)
+        assert version["rule_snapshot"] == '{"差":["甲馆","暂缓丙"]}'
+        verdicts_after = {r["volume_no"]: r["verdict"]
+                          for r in svc.result_page(conn, v_after, None, 100, 0)}
+        # 眼下逐卷判定确实相同——发版依据的是归属组合层面的差异
+        assert verdicts_after == verdicts_before
+
+
+def test_equivalent_save_then_upload_publishes_with_new_wording(client, svc):
+    """等价保存后补报：照常重算发版，新版本使用新写法且结论与旧规则一致。"""
+    setup_basic(client)
+    client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'})
+    upload(client, "/lists/1/upload", ["V1"])
+    with svc._conn() as conn:
+        v_before = svc.current_version_id(conn)
+
+    # 等价改写（吸收律），只保存不重算
+    client.post("/rules/save",
+                data={"rule": '{"并":["甲馆","乙馆",{"交":["甲馆","乙馆"]}]}'})
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) == v_before
+
+    # 补报乙馆：照常发版，快照为等价保存的新写法
+    upload(client, "/lists/2/upload", ["V3"])
+    with svc._conn() as conn:
+        v_after = svc.current_version_id(conn)
+        assert v_after > v_before
+        version = svc.get_version(conn, v_after)
+        assert version["rule_snapshot"] == '{"并":["甲馆","乙馆",{"交":["甲馆","乙馆"]}]}'
+        verdicts = {r["volume_no"]: r["verdict"]
+                    for r in svc.result_page(conn, v_after, None, 100, 0)}
+        assert verdicts["V1"] == "in" and verdicts["V3"] == "in"
+        assert verdicts["V2"] == "out"  # 暂缓丙未被规则引用，不影响结论
+
+
+def test_equivalence_judged_against_rule_in_effect(client, svc):
+    """另一份规则先保存时，按届时生效的规则重新判断等价性。"""
+    setup_basic(client)
+    client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'})
+    # 第二份规则与第一份不等价 -> 发版，现行规则变为 甲馆
+    client.post("/rules/save", data={"rule": '"甲馆"'})
+    with svc._conn() as conn:
+        v_before = svc.current_version_id(conn)
+    # 第三份规则与第一份等价、但与届时生效的“甲馆”不等价 -> 必须发版
+    rv = client.post("/rules/save",
+                     data={"rule": '{"并":["甲馆","乙馆",{"交":["甲馆","乙馆"]}]}'},
+                     follow_redirects=True)
+    assert "重算出版本" in rv.text
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) > v_before
+
+
+def test_failed_rule_save_keeps_old_rule_and_version(client, svc):
+    """保存失败：沿用原规则与现行版（等价路径同样遵守）。"""
+    setup_basic(client)
+    client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'})
+    upload(client, "/lists/1/upload", ["V1"])
+    with svc._conn() as conn:
+        v_before = svc.current_version_id(conn)
+        rule_before = svc.get_rule_text(conn)
+
+    # 非法 JSON、引用幽灵名单：均失败，规则与版本都不变
+    client.post("/rules/save", data={"rule": "{broken"}, follow_redirects=True)
+    client.post("/rules/save", data={"rule": '{"并":["甲馆","幽灵馆"]}'},
+                follow_redirects=True)
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) == v_before
+        assert svc.get_rule_text(conn) == rule_before
+
+
+def test_rule_save_without_volumes_or_prior_rule(client, svc):
+    """总册为空或首次保存：不做等价判定，走原有保存/重算路径。"""
+    setup_basic_no_volumes(client)
+    # 总册为空：保存成功但不产版本
+    rv = client.post("/rules/save", data={"rule": '{"并":["甲馆","乙馆"]}'},
+                     follow_redirects=True)
+    assert "暂未生成版本" in rv.text
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) is None
+    # 补齐总册后首次实质发版
+    upload(client, "/volumes/upload", ["V1"])
+    with svc._conn() as conn:
+        assert svc.current_version_id(conn) is not None

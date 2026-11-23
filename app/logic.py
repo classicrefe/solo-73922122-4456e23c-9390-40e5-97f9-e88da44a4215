@@ -116,6 +116,62 @@ def referenced_names(tree: dict) -> set[str]:
     return out
 
 
+# ---------------------------------------------------------------- 规则等价判定
+
+def _column_mask(i: int, rows: int) -> int:
+    """第 i 个变量在全空间真值表中的列掩码：第 r 位为 1 当且仅当赋值 r 中变量 i 为真。
+
+    赋值 r 按位序排列（变量 i 对应 r 的第 i 位），因此列 i 的位模式为
+    block=2^i 个 0、block 个 1 交替重复。
+    """
+    block = 1 << i
+    mask = 0
+    ones = (1 << block) - 1
+    for start in range(0, rows, 2 * block):
+        mask |= ones << (start + block)
+    return mask
+
+
+def _truth_mask(node: dict, var_pos: dict[str, int], k: int) -> int:
+    """规则在 k 个变量全部归属组合上的真值表掩码（2^k 位，第 r 位对应赋值 r）。
+
+    同一名单名映射到同一变量位，因此规则中多次出现的名单归属取值始终一致。
+    """
+    rows = 1 << k
+    all_one = (1 << rows) - 1
+
+    def walk(n: dict) -> int:
+        if n["type"] == "ref":
+            return _column_mask(var_pos[n["name"]], rows)
+        children = n["children"]
+        if n["op"] == "union":
+            m = 0
+            for c in children:
+                m |= walk(c)
+            return m
+        if n["op"] == "intersect":
+            m = all_one
+            for c in children:
+                m &= walk(c)
+            return m
+        return walk(children[0]) & ~walk(children[1]) & all_one
+
+    return walk(node)
+
+
+def rules_equivalent(tree_a: dict, tree_b: dict) -> bool:
+    """判断两份规范化规则是否等价：对名单归属的每种可能组合结论都相同。
+
+    变量取两份规则引用名单的并集（不超过 MAX_LISTS 个），枚举全部 2^K 种
+    归属组合比较真值表；与当前各名单的提交状态无关，因此补报、撤回不会
+    使等价结论失效。同一名单出现多次时归属取值一致（共用同一变量位）。
+    """
+    names = sorted(referenced_names(tree_a) | referenced_names(tree_b))
+    var_pos = {name: i for i, name in enumerate(names)}
+    k = len(names)
+    return _truth_mask(tree_a, var_pos, k) == _truth_mask(tree_b, var_pos, k)
+
+
 # ---------------------------------------------------------------- 真值表求值
 
 def _bit_count(x: int) -> int:
@@ -174,15 +230,8 @@ class RuleEvaluator:
         self.tree = walk(tree)
 
     # 预计算缺报变量 i 的列掩码：第 r 位为 1 当且仅当赋值 r 中变量 i 为真。
-    # 赋值 r 按位序排列（变量 i 对应 r 的第 i 位），因此列 i 的位模式为
-    # block=2^i 个 0、block 个 1 交替重复。
     def _var_mask(self, i: int) -> int:
-        block = 1 << i
-        mask = 0
-        ones = (1 << block) - 1
-        for start in range(0, self.rows, 2 * block):
-            mask |= ones << (start + block)
-        return mask
+        return _column_mask(i, self.rows)
 
     def _eval(self, node, signature: int) -> int:
         """对当前卷号求节点的完整结果掩码。

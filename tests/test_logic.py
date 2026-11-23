@@ -1,11 +1,12 @@
 """核心三值逻辑测试：用朴素枚举器对 RuleEvaluator 做交叉验证。"""
 
 import itertools
+import random
 
 import pytest
 
 from app.logic import (MAX_LISTS, RuleError, RuleEvaluator, parse_rule,
-                       referenced_names)
+                       referenced_names, rules_equivalent)
 
 
 # --------------------------------------------------------------- 朴素参考实现
@@ -185,3 +186,108 @@ def test_max_lists_truth_table_size():
     verdict, rel = ev.classify(set())
     assert verdict == "pending"
     assert set(rel) == set(range(MAX_LISTS))
+
+
+# ---------------------------------------------------------------- 规则等价判定
+
+def eval_ref(tree, membership):
+    """朴素求值参考实现：membership 为“在名单中”的名单名集合。"""
+    if isinstance(tree, str):
+        return 1 if tree in membership else 0
+    op, args = tree
+    vals = [eval_ref(a, membership) for a in args]
+    if op == "union":
+        return 1 if any(vals) else 0
+    if op == "intersect":
+        return 1 if all(vals) else 0
+    return 1 if vals[0] and not vals[1] else 0
+
+
+def equiv_brute_force(tree_a, tree_b):
+    """朴素等价判定：枚举引用名单并集的全部归属组合逐一比较。"""
+    names = sorted(referenced_names(tree_a) | referenced_names(tree_b))
+    for bits in itertools.product((0, 1), repeat=len(names)):
+        membership = {n for n, b in zip(names, bits) if b}
+        if eval_ref(normalize_ref(tree_a), membership) != \
+                eval_ref(normalize_ref(tree_b), membership):
+            return False
+    return True
+
+
+def test_rules_equivalent_known_pairs():
+    names = ["A", "B", "C"]
+    equivalent_pairs = [
+        # 吸收律：A ∪ (A ∩ B) ≡ A
+        ({"并": ["A", {"交": ["A", "B"]}]}, "A"),
+        # 重复引用取值一致：A ∪ (B − A) ≡ A ∪ B
+        ({"并": ["A", {"差": ["B", "A"]}]}, {"并": ["A", "B"]}),
+        # 恒为空集：A − A ≡ B − B（引用集合不同也算等价）
+        ({"差": ["A", "A"]}, {"差": ["B", "B"]}),
+        # 德摩根：A − (B ∪ C) ≡ (A − B) ∩ (A − C)
+        ({"差": ["A", {"并": ["B", "C"]}]},
+         {"交": [{"差": ["A", "B"]}, {"差": ["A", "C"]}]}),
+        # 交换律 + 嵌套换位
+        ({"并": ["A", {"交": ["B", "C"]}]}, {"并": [{"交": ["C", "B"]}, "A"]}),
+    ]
+    for doc_a, doc_b in equivalent_pairs:
+        tree_a = parse_rule(doc_a, names)
+        tree_b = parse_rule(doc_b, names)
+        assert rules_equivalent(tree_a, tree_b), (doc_a, doc_b)
+        assert rules_equivalent(tree_b, tree_a)  # 对称
+
+    different_pairs = [
+        # 并集 vs 交集
+        ({"并": ["A", "B"]}, {"交": ["A", "B"]}),
+        # 差集方向
+        ({"差": ["A", "B"]}, {"差": ["B", "A"]}),
+        # 多一份名单：A ∪ B 与 A 在 B=1、A=0 时结论不同
+        ({"并": ["A", "B"]}, "A"),
+        # A ∪ (B ∩ C) 与 (A ∪ B) ∩ C 不同
+        ({"并": ["A", {"交": ["B", "C"]}]},
+         {"交": [{"并": ["A", "B"]}, "C"]}),
+    ]
+    for doc_a, doc_b in different_pairs:
+        tree_a = parse_rule(doc_a, names)
+        tree_b = parse_rule(doc_b, names)
+        assert not rules_equivalent(tree_a, tree_b), (doc_a, doc_b)
+
+
+def test_rules_equivalent_self_and_textual_variants():
+    # 同一规则的不同写法（键别名、空白）规范化后必然等价
+    names = ["A", "B"]
+    t1 = parse_rule({"并": ["A", {"差": ["B", "A"]}]}, names)
+    t2 = parse_rule({"union": ["A", {"diff": ["B", "A"]}]}, names)
+    assert rules_equivalent(t1, t2)
+    assert rules_equivalent(t1, t1)
+
+
+def random_rule_doc(names, rng, depth):
+    if depth == 0 or rng.random() < 0.35:
+        return rng.choice(names)
+    op = rng.choice(["并", "交", "差"])
+    arity = 2 if op == "差" else rng.randint(1, 3)
+    return {op: [random_rule_doc(names, rng, depth - 1) for _ in range(arity)]}
+
+
+def test_rules_equivalent_matches_brute_force():
+    """随机规则对：rules_equivalent 与朴素全组合枚举结论一致。"""
+    rng = random.Random(20261123)
+    names = ["A", "B", "C", "D"]
+    n_equal = 0
+    for _ in range(300):
+        tree_a = parse_rule(random_rule_doc(names, rng, 3), names)
+        tree_b = parse_rule(random_rule_doc(names, rng, 3), names)
+        expected = equiv_brute_force(tree_a, tree_b)
+        assert rules_equivalent(tree_a, tree_b) == expected
+        n_equal += expected
+    assert n_equal > 0  # 确保样本里确实出现过等价对，不是恒假通过
+
+
+def test_rules_equivalent_at_max_lists():
+    # 14 个名单的全空间真值表（2^14 位）等价判定仍可快速完成
+    names = [f"L{i}" for i in range(MAX_LISTS)]
+    tree_a = parse_rule({"并": names}, names)
+    tree_b = parse_rule({"并": list(reversed(names))}, names)
+    assert rules_equivalent(tree_a, tree_b)
+    tree_c = parse_rule({"并": names[:-1]}, names)
+    assert not rules_equivalent(tree_a, tree_c)
